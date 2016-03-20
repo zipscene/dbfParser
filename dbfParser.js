@@ -1,6 +1,8 @@
 var Writable = require('stream').Writable;
 var util = require('util');
 
+
+
 function DbfParser(options) {
   Writable.call(this, options);
 }
@@ -12,31 +14,29 @@ DbfParser.prototype._write = function(chunk, encoding, callback) {
   if (!this.header) {
     this.header = parseHeader(chunk);
     this.emit('header', this.header);
-
-    position = this.header.headerLength + 1;
+    position = this.header.headerLength;
   }
 
-  if (this.leftover) {
+  if (this.leftover && this.leftover.length) {
     var newChunk = new Buffer(chunk.length + this.leftover.length);
     this.leftover.copy(newChunk, 0);
     chunk.copy(newChunk, this.leftover.length, 0, chunk.length);
     chunk = newChunk;
-    this.leftover = 0;
+    this.leftover = [];
   }
 
-  var recordLength = this.header.recordLength;
-  while (position + recordLength - 1 <= chunk.length) {
+  var recordLength = this.header.recordLength;  
+  while (position + recordLength < chunk.length) {
     var recordChunk = chunk.slice(position, position + recordLength);
     var record = parseRecord(recordChunk, this.header);
 
     this.emit('record', record);
 
-    position += (recordLength - 1);
+    position += recordLength;
   }
 
-  if (position + 1 < chunk.length) {
-    this.leftover = chunk.slice(position + 1, chunk.length);
-  }
+
+  this.leftover = chunk.slice(position, chunk.length);
 
   callback();
 };
@@ -47,8 +47,8 @@ function parseHeader(chunk) {
   var fieldDescriptors = (function() {
     var result = [];
     var i = 32;
-    
-    while(chunk[i] !== 0x0D) {
+
+    while (chunk[i] !== 0x0D) {
       var field = chunk.slice(i, i + 31);
 
       result.push(parseFileDescriptor(field));
@@ -84,7 +84,7 @@ function parseFileDescriptor(chunk) {
     fieldFlags: chunk[18],
     autoincNextValue: chunk.readInt32LE(19),
     autoincStepValue: chunk[23]
-    // 24-31 reserved
+      // 24-31 reserved
   };
 
   column.parse = getParser(column);
@@ -96,30 +96,31 @@ function getParser(column) {
     case 'D': // Date
       return function(chunk) {
         var value = chunk.toString('ascii');
-        return new Date(value.substr(0,4), value.substr(4,2), value.substr(6))
-      }
+        return new Date(value.substr(0, 4), value.substr(4, 2), value.substr(6));
+      };
 
     case 'N': // Numeric
       return function(chunk) {
         return Number(chunk.toString('ascii'));
-      }
+      };
 
     case 'C': // Character
       return function(chunk) {
         return chunk.toString('ascii').replace(/\s+$/, '');
-      }
+      };
 
     default:
       console.error('datatype "' + column.type + '" not supported, please fork and add it');
       return function(chunk) {
         return chunk.toString('ascii');
-      }
+      };
   }
 }
 
 function parseRecord(chunk, header) {
-  var position = 0;
-  var record = {}
+  var position = 1;
+  var record = {};
+  record.isRecordDeleted = (chunk[0] == 0x2A);
   header.fieldDescriptors.forEach(function(column, index) {
     var value = chunk.slice(position, position + column.length);
     position += column.length;
