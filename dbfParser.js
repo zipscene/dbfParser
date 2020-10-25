@@ -1,8 +1,6 @@
 var Writable = require('stream').Writable;
 var util = require('util');
 
-
-
 function DbfParser(options) {
   Writable.call(this, options);
 }
@@ -25,32 +23,30 @@ DbfParser.prototype._write = function(chunk, encoding, callback) {
     this.leftover = [];
   }
 
-  var recordLength = this.header.recordLength;  
-  while (position + recordLength < chunk.length) {
-    var recordChunk = chunk.slice(position, position + recordLength);
-    var record = parseRecord(recordChunk, this.header);
+  if (this.header.recordLength) {
+    var recordLength = this.header.recordLength;
+    while (position + recordLength < chunk.length) {
+      var recordChunk = chunk.slice(position, position + recordLength);
+      var record = parseRecord(recordChunk, this.header);
 
-    this.emit('record', record);
+      this.emit('record', record);
 
-    position += recordLength;
+      position += recordLength;
+    }
+    this.leftover = chunk.slice(position, chunk.length);
   }
-
-
-  this.leftover = chunk.slice(position, chunk.length);
-
   callback();
 };
 
 
 function parseHeader(chunk) {
-
   var fieldDescriptors = (function() {
     var result = [];
     var i = 32;
 
     while (chunk[i] !== 0x0D) {
       var field = chunk.slice(i, i + 31);
-
+      if (!field || field.length === 0) return;
       result.push(parseFileDescriptor(field));
       i += 32;
     }
@@ -75,8 +71,12 @@ function parseHeader(chunk) {
 }
 
 function parseFileDescriptor(chunk) {
+  // if type is undefined, return
+  var name = chunk.toString('ascii', 0, 10).replace(/\u0000+$/, '');
+  if (!name) return;
+
   var column = {
-    name: chunk.toString('ascii', 0, 10).replace(/\u0000+$/, ''),
+    name: name,
     type: chunk.toString('ascii', 11, 12),
     // 12-15 displacement 
     length: chunk[16],
@@ -96,7 +96,11 @@ function getParser(column) {
     case 'D': // Date
       return function(chunk) {
         var value = chunk.toString('ascii');
-        return new Date(value.substr(0, 4), value.substr(4, 2), value.substr(6));
+        //return new Date(value.substr(0, 4), value.substr(4, 2), value.substr(6));
+        var year = value.substr(0, 4);
+        var month = value.substr(4, 2) - 1;
+        var day = value.substr(6);
+        return new Date(year, month, day);
       };
 
     case 'N': // Numeric
@@ -111,6 +115,7 @@ function getParser(column) {
 
     default:
       console.error('datatype "' + column.type + '" not supported, please fork and add it');
+
       return function(chunk) {
         return chunk.toString('ascii');
       };
